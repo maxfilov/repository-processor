@@ -8,10 +8,7 @@ import javax.lang.model.SourceVersion;
 import javax.lang.model.element.*;
 import javax.tools.Diagnostic;
 import java.io.IOException;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 class Getter {
@@ -69,6 +66,16 @@ class Index {
 @AutoService(Processor.class)
 public class Proc extends AbstractProcessor {
 
+    private final Appendable output;
+
+    public Proc() {
+        output = null;
+    }
+
+    public Proc(Appendable appendable) {
+        this.output = appendable;
+    }
+
     private static List<Index> makeIndexes(List<? extends Getter> getters, TypeName enumType) {
         return getters.stream()
                 .map(getter -> new Index(getter, makeIndex(getter, enumType)))
@@ -104,6 +111,7 @@ public class Proc extends AbstractProcessor {
         final ParameterSpec parameter = ParameterSpec.builder(getter.getReturnType(), "code", Modifier.FINAL).build();
         return MethodSpec
                 .methodBuilder("findBy" + getter.getFieldName())
+                .addModifiers(Modifier.PUBLIC)
                 .addParameter(parameter)
                 .returns(indexableType)
                 .addCode(CodeBlock
@@ -113,7 +121,7 @@ public class Proc extends AbstractProcessor {
                 .build();
     }
 
-    private static TypeSpec createRepository(TypeElement element) throws IOException {
+    public static TypeSpec createRepository(TypeElement element) {
         List<Getter> getters = element.getEnclosedElements().stream()
                 .map(Getter::tryConvert)
                 .filter(Objects::nonNull)
@@ -122,6 +130,7 @@ public class Proc extends AbstractProcessor {
         final List<Index> indices = makeIndexes(getters, indexableType);
         return TypeSpec
                 .classBuilder(element.getSimpleName() + "Repository")
+                .addModifiers(Modifier.PUBLIC)
                 .addFields(indices.stream().map(Index::getField).collect(Collectors.toList()))
                 .addMethods(makeLookups(indices, indexableType))
                 .build();
@@ -132,10 +141,14 @@ public class Proc extends AbstractProcessor {
         try {
             for (Element element : roundEnvironment.getElementsAnnotatedWith(CorrelationRepositorySource.class)) {
                 final String packageName = ((PackageElement) element.getEnclosingElement()).getQualifiedName().toString();
-                JavaFile
+                JavaFile javaFile = JavaFile
                         .builder(packageName, createRepository((TypeElement) element))
-                        .build()
-                        .writeTo(processingEnv.getFiler());
+                        .build();
+                if (output != null) {
+                    javaFile.writeTo(output);
+                } else {
+                    javaFile.writeTo(processingEnv.getFiler());
+                }
             }
             return true;
         } catch (IOException ex) {
